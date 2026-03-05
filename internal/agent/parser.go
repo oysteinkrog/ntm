@@ -218,12 +218,14 @@ func (p *parserImpl) detectStateFlags(output string, state *AgentState) {
 	} else if rawIsWorking {
 		state.IsWorking = true
 	} else if state.Type == AgentTypeClaudeCode {
-		// Fallback: if an active spinner is present in the last few lines,
-		// the agent is working even if no ccWorkingPatterns matched.
-		// This handles randomized spinner verbs (Billowing…, Scurrying…, etc.)
-		// that aren't in the working substring list.
+		// Fallback: if an active spinner is present AFTER the last ❯ prompt,
+		// the agent is working. Spinners before ❯ are stale (previous turn).
 		lastLines := GetLastNLines(output, 12)
-		if matchAnyRegex(lastLines, ccSpinnerActivePatterns) {
+		afterPrompt := lastLines
+		if idx := strings.LastIndex(lastLines, "❯"); idx >= 0 {
+			afterPrompt = lastLines[idx:]
+		}
+		if matchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
 			state.IsWorking = true
 		}
 	}
@@ -310,11 +312,17 @@ func (p *parserImpl) detectIdle(output string, agentType AgentType) bool {
 			return true
 		}
 		idleMatch := matchAnyRegex(lastLines, ccIdlePatterns)
-		// Active spinner overrides idle: if we see a spinner pattern in the
-		// last few lines, the agent is working even if an idle pattern also matches
-		// (e.g. from the permanent status bar or a stale prompt above the spinner).
-		if idleMatch && matchAnyRegex(lastLines, ccSpinnerActivePatterns) {
-			return false
+		// Active spinner overrides idle ONLY if the spinner appears AFTER the
+		// last ❯ prompt. Spinners above the prompt are stale (previous turn).
+		// Check only lines after the last ❯ for active spinners.
+		if idleMatch {
+			afterPrompt := lastLines
+			if idx := strings.LastIndex(lastLines, "❯"); idx >= 0 {
+				afterPrompt = lastLines[idx:]
+			}
+			if matchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
+				return false
+			}
 		}
 		return idleMatch
 	case AgentTypeCodex:
