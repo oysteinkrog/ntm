@@ -465,11 +465,17 @@ func runWatchMode(cmd *cobra.Command, session string) error {
 		if err := executeAssignmentsEnhanced(session, initialOutput, assignOpts); err != nil {
 			watchLoop.logf("Warning: Failed to execute initial assignments: %v", err)
 		} else {
+			// Reload store so idle scan sees the initial assignments
+			if freshStore, err := assignment.LoadStore(session); err == nil {
+				watchLoop.store = freshStore
+			}
 			watchLoop.logf("Initial assignment: %d beads to %d agents", len(initialOutput.Assignments), len(initialOutput.Assignments))
+			cooldownUntil := time.Now().Add(90 * time.Second)
 			for _, assigned := range initialOutput.Assignments {
 				watchLoop.mu.Lock()
 				watchLoop.totalAssigned++
 				watchLoop.lastAssignmentAt = time.Now()
+				watchLoop.paneCooldown[assigned.Pane] = cooldownUntil
 				watchLoop.mu.Unlock()
 				watchLoop.logf("  %s -> pane %d (%s)", assigned.BeadID, assigned.Pane, assigned.AgentType)
 			}
@@ -4300,6 +4306,12 @@ func (w *WatchLoop) scanAndAssignIdle() {
 	if err := executeAssignmentsEnhanced(w.session, plan, opts); err != nil {
 		w.logf("[IDLE-SCAN] Warning: failed to execute assignments: %v", err)
 		return
+	}
+
+	// Reload the store to pick up assignments written by executeAssignmentsEnhanced
+	// (which creates its own store instance from disk).
+	if freshStore, err := assignment.LoadStore(w.session); err == nil {
+		w.store = freshStore
 	}
 
 	w.mu.Lock()
