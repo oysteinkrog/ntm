@@ -4154,6 +4154,13 @@ func (w *WatchLoop) handleCompletion(event completion.CompletionEvent) error {
 	w.totalCompleted++
 	w.logf("Completion: %s by pane %d (%s, %v)", event.BeadID, event.Pane, event.AgentType, duration)
 
+	// Remove from the active store so the idle scan's bead dedup doesn't block it.
+	// We skip the state machine (assigned -> working -> completed) since the completion
+	// detector fires asynchronously and the assignment may still be in "assigned" state.
+	if event.BeadID != "" {
+		w.store.Remove(event.BeadID)
+	}
+
 	// Check for delay between assignments
 	if w.delay > 0 && !w.lastAssignmentAt.IsZero() {
 		elapsed := time.Since(w.lastAssignmentAt)
