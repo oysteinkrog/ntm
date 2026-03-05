@@ -4234,11 +4234,49 @@ func (w *WatchLoop) scanAndAssignIdle() {
 
 	w.logf("[IDLE-SCAN] Found %d idle agent(s) without assignments, triggering assignment", len(unassigned))
 
+	// Check for dead agents (process exited, pane shows bare shell).
+	// If the pane_current_command is a shell instead of the agent binary,
+	// re-launch the agent before assigning work.
+	for i, a := range unassigned {
+		if isDeadAgent(a.pane) {
+			w.logf("[IDLE-SCAN] Pane %d: agent exited (command=%q), respawning %s", a.pane.Index, a.pane.Command, a.agentType)
+			if err := respawnDeadAgent(w.session, a.pane, a.agentType); err != nil {
+				w.logf("[IDLE-SCAN] Warning: respawn pane %d failed: %v", a.pane.Index, err)
+				// Put a long cooldown on failed respawn to avoid tight loop
+				w.mu.Lock()
+				w.paneCooldown[a.pane.Index] = time.Now().Add(5 * time.Minute)
+				w.mu.Unlock()
+				// Remove from unassigned
+				unassigned = append(unassigned[:i], unassigned[i+1:]...)
+			} else {
+				// Agent needs time to boot — set cooldown and skip assignment this cycle
+				w.mu.Lock()
+				w.paneCooldown[a.pane.Index] = time.Now().Add(30 * time.Second)
+				w.mu.Unlock()
+			}
+		}
+	}
+
+	// After respawning, filter out panes that are in cooldown (just respawned)
+	var assignable []assignAgentInfo
+	for _, a := range unassigned {
+		w.mu.Lock()
+		cd, has := w.paneCooldown[a.pane.Index]
+		w.mu.Unlock()
+		if !has || time.Now().After(cd) {
+			assignable = append(assignable, a)
+		}
+	}
+
+	if len(assignable) == 0 {
+		return
+	}
+
 	// Use the same assignment flow as the main assign command
 	opts := &AssignCommandOptions{
 		Session:         w.session,
 		Strategy:        w.strategy,
-		Limit:           len(unassigned),
+		Limit:           len(assignable),
 		AgentTypeFilter: w.opts.AgentTypeFilter,
 		Template:        w.opts.Template,
 		TemplateFile:    w.opts.TemplateFile,
@@ -4273,6 +4311,55 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		w.logf("[IDLE-SCAN] Assigned: %s -> pane %d (%s) [cooldown 90s]", a.BeadID, a.Pane, a.AgentType)
 	}
 	w.mu.Unlock()
+}
+
+// isDeadAgent checks if a pane's agent process has exited, leaving a bare shell.
+// This happens when claude crashes, hits rate limits, or exhausts context.
+func isDeadAgent(pane tmux.Pane) bool {
+	cmd := strings.ToLower(strings.TrimSpace(pane.Command))
+	if cmd == "" {
+		return false // Can't tell — don't assume dead
+	}
+	// If the pane command is an agent binary, it's alive
+	agentBinaries := []string{"claude", "cc", "codex", "cod", "gemini", "gmi", "cursor", "windsurf", "aider"}
+	for _, bin := range agentBinaries {
+		if cmd == bin || strings.HasPrefix(cmd, bin+" ") || strings.HasSuffix(cmd, "/"+bin) {
+			return false
+		}
+	}
+	// If it's a shell, the agent has exited
+	shells := []string{"bash", "fish", "zsh", "sh", "dash", "ksh", "tcsh", "csh"}
+	for _, sh := range shells {
+		if cmd == sh || cmd == "-"+sh || strings.HasSuffix(cmd, "/"+sh) {
+			return true
+		}
+	}
+	return false // Unknown command — don't assume dead
+}
+
+// respawnDeadAgent re-launches an agent in a pane where the process has exited.
+// Uses tmux send-keys to type the agent launch command into the bare shell.
+func respawnDeadAgent(session string, pane tmux.Pane, agentType string) error {
+	var cmd string
+	switch agentType {
+	case "claude", "cc":
+		cmd = "claude --dangerously-skip-permissions"
+	case "codex", "cod":
+		cmd = "codex --dangerously-bypass-approvals-and-sandbox"
+	case "gemini", "gmi":
+		cmd = "gemini --yolo"
+	case "cursor":
+		cmd = "cursor"
+	case "windsurf":
+		cmd = "windsurf"
+	case "aider":
+		cmd = "aider"
+	default:
+		return fmt.Errorf("unknown agent type: %s", agentType)
+	}
+
+	// Send the agent command to the pane
+	return tmux.SendKeys(pane.ID, cmd, true)
 }
 
 // shouldStop checks if watch mode should exit
