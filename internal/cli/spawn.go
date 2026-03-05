@@ -1571,6 +1571,16 @@ func spawnSessionLogic(opts SpawnOptions) (err error) {
 			}
 		}
 
+		// Suppress Claude Code UI animations for swarm agents.
+		// DISABLE_NON_ESSENTIAL_MODEL_CALLS kills random spinner verbs
+		// (Billowing…, Scurrying…) that interfere with state detection.
+		if agent.Type == AgentTypeClaude {
+			if envVars == nil {
+				envVars = make(map[string]string)
+			}
+			envVars["DISABLE_NON_ESSENTIAL_MODEL_CALLS"] = "1"
+		}
+
 		// Resolve model alias to full model name
 		resolvedModel := ResolveModel(agent.Type, agent.Model)
 		if agent.Type == AgentTypeOllama && resolvedModel == "" {

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,10 @@ import (
 	"github.com/Dicklesworthstone/ntm/internal/tui/theme"
 	"github.com/Dicklesworthstone/ntm/internal/webhook"
 )
+
+// ccPromptFallback detects the Claude Code ❯ prompt as a secondary idle signal
+// when the full parser can't determine state (e.g. stale output confuses heuristics).
+var ccPromptFallback = regexp.MustCompile(`(?m)❯[\s\x{00a0}]*$`)
 
 var (
 	assignAuto         bool
@@ -850,6 +855,25 @@ func determineAgentState(scrollback, agentTypeStr string) string {
 		return "working"
 	}
 
+	// Fallback for Claude Code: when the parser can't decide (stale output
+	// confuses heuristics), check for the ❯ prompt directly. If found in the
+	// last few lines without an active spinner, the agent is idle.
+	if hint == agent.AgentTypeClaudeCode {
+		cleanScrollback := agent.StripANSICodes(scrollback)
+		lastLines := agent.GetLastNLines(cleanScrollback, 12)
+		hasPrompt := ccPromptFallback.MatchString(lastLines)
+		hasActiveSpinner := false
+		for _, p := range agent.CCSpinnerActivePatterns() {
+			if p.MatchString(lastLines) {
+				hasActiveSpinner = true
+				break
+			}
+		}
+		if hasPrompt && !hasActiveSpinner {
+			return "idle"
+		}
+	}
+
 	return "unknown"
 }
 
@@ -1197,6 +1221,15 @@ func getAssignOutputEnhanced(opts *AssignCommandOptions) (*AssignOutputEnhanced,
 		model := detectModelFromTitle(at, pane.Title)
 		scrollback, _ := tmux.CaptureForStatusDetection(pane.ID)
 		state := determineAgentState(scrollback, at)
+
+		if opts.Verbose {
+			trimmed := strings.TrimSpace(scrollback)
+			if len(trimmed) > 200 {
+				trimmed = trimmed[len(trimmed)-200:]
+			}
+			fmt.Fprintf(os.Stderr, "[IDLE-CHECK] pane=%d type=%q state=%q scrollback_len=%d scrollback_trimmed=%q\n",
+				pane.Index, at, state, len(scrollback), trimmed)
+		}
 
 		if state == "idle" {
 			idleAgents = append(idleAgents, assignAgentInfo{
@@ -1785,7 +1818,18 @@ func executeAssignmentsEnhanced(session string, out *AssignOutputEnhanced, opts 
 		paneIDByIndex[p.Index] = p.ID
 	}
 
+	// Track which panes already received a prompt in this batch.
+	// Sending multiple prompts to the same pane queues them, confusing the agent.
+	seenPanes := make(map[int]string) // pane index -> first bead assigned
+
 	for _, item := range out.Assignments {
+		if prev, dup := seenPanes[item.Pane]; dup {
+			if !opts.Quiet {
+				fmt.Printf("  ⊘ Skipping %s for pane %d — already assigned %s\n", item.BeadID, item.Pane, prev)
+			}
+			continue
+		}
+
 		// Try to reserve file paths if manager is available
 		if reservationMgr != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
@@ -1848,6 +1892,7 @@ func executeAssignmentsEnhanced(session string, out *AssignOutputEnhanced, opts 
 
 		item.PromptSent = true
 		successCount++
+		seenPanes[item.Pane] = item.BeadID
 
 		// Track in assignment store
 		if store != nil {

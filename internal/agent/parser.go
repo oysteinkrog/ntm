@@ -34,7 +34,7 @@ func (p *parserImpl) Parse(output string) (*AgentState, error) {
 // ParseWithHint analyzes terminal output with a known agent type hint.
 func (p *parserImpl) ParseWithHint(output string, hint AgentType) (*AgentState, error) {
 	// Strip ANSI codes for cleaner pattern matching
-	cleanOutput := stripANSICodes(output)
+	cleanOutput := StripANSICodes(output)
 
 	state := &AgentState{
 		ParsedAt: time.Now().UTC(),
@@ -215,8 +215,17 @@ func (p *parserImpl) detectStateFlags(output string, state *AgentState) {
 	// regardless of what keywords appear in the scrollback.
 	if state.IsIdle {
 		state.IsWorking = false
-	} else {
-		state.IsWorking = rawIsWorking
+	} else if rawIsWorking {
+		state.IsWorking = true
+	} else if state.Type == AgentTypeClaudeCode {
+		// Fallback: if an active spinner is present in the last few lines,
+		// the agent is working even if no ccWorkingPatterns matched.
+		// This handles randomized spinner verbs (Billowing…, Scurrying…, etc.)
+		// that aren't in the working substring list.
+		lastLines := GetLastNLines(output, 12)
+		if matchAnyRegex(lastLines, ccSpinnerActivePatterns) {
+			state.IsWorking = true
+		}
 	}
 
 	// Error detection
@@ -226,7 +235,7 @@ func (p *parserImpl) detectStateFlags(output string, state *AgentState) {
 // detectRateLimit checks if the agent hit an API usage limit.
 // We scan recent output (last 50 lines) to avoid stale errors triggering state.
 func (p *parserImpl) detectRateLimit(output string, agentType AgentType) bool {
-	recentOutput := getLastNLines(output, 50)
+	recentOutput := GetLastNLines(output, 50)
 
 	switch agentType {
 	case AgentTypeClaudeCode:
@@ -256,7 +265,7 @@ func (p *parserImpl) detectRateLimit(output string, agentType AgentType) bool {
 // This focuses on recent output (last 20 lines) for accuracy.
 func (p *parserImpl) detectWorking(output string, agentType AgentType) bool {
 	// Check recent output - recent activity is more relevant
-	recentOutput := getLastNLines(output, 20)
+	recentOutput := GetLastNLines(output, 20)
 
 	switch agentType {
 	case AgentTypeClaudeCode:
@@ -292,7 +301,7 @@ func (p *parserImpl) detectIdle(output string, agentType AgentType) bool {
 	if agentType == AgentTypeClaudeCode {
 		lineCount = 12
 	}
-	lastLines := getLastNLines(output, lineCount)
+	lastLines := GetLastNLines(output, lineCount)
 
 	switch agentType {
 	case AgentTypeClaudeCode:
@@ -333,7 +342,7 @@ func (p *parserImpl) detectIdle(output string, agentType AgentType) bool {
 // detectError checks if the agent is in an error state.
 func (p *parserImpl) detectError(output string, agentType AgentType) bool {
 	// Check recent output for error patterns
-	recentOutput := getLastNLines(output, 10)
+	recentOutput := GetLastNLines(output, 10)
 
 	switch agentType {
 	case AgentTypeClaudeCode:
@@ -356,7 +365,7 @@ func (p *parserImpl) detectError(output string, agentType AgentType) bool {
 // collectLimitIndicators returns the specific patterns that matched for rate limiting.
 func (p *parserImpl) collectLimitIndicators(output string, agentType AgentType) []string {
 	// Focus on recent output to match detection logic
-	recentOutput := getLastNLines(output, 50)
+	recentOutput := GetLastNLines(output, 50)
 
 	switch agentType {
 	case AgentTypeClaudeCode:
@@ -386,7 +395,7 @@ func (p *parserImpl) collectLimitIndicators(output string, agentType AgentType) 
 // collectWorkIndicators returns the specific patterns that matched for working state.
 func (p *parserImpl) collectWorkIndicators(output string, agentType AgentType) []string {
 	// Focus on recent output
-	recentOutput := getLastNLines(output, 20)
+	recentOutput := GetLastNLines(output, 20)
 
 	switch agentType {
 	case AgentTypeClaudeCode:

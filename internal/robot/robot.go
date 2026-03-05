@@ -3247,8 +3247,8 @@ func determineState(output, agentType string) string {
 	if HasIdlePattern(output, agentType) {
 		return "idle"
 	}
-	// If output is empty and it's a user pane, treat as idle (prompt)
-	if strings.TrimSpace(output) == "" && (agentType == "" || agentType == "user") {
+	// If output is empty, treat as idle — agent just restarted or finished.
+	if strings.TrimSpace(output) == "" {
 		return "idle"
 	}
 	// Otherwise assume active/working

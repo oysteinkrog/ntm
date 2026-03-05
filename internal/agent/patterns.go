@@ -389,9 +389,15 @@ func extractInt(pattern *regexp.Regexp, text string) *int64 {
 	return nil
 }
 
-// getLastNLines returns the last n lines of text.
+// CCSpinnerActivePatterns returns the active spinner patterns for Claude Code.
+// Exported for use by the assign package's fallback idle detection.
+func CCSpinnerActivePatterns() []*regexp.Regexp {
+	return ccSpinnerActivePatterns
+}
+
+// GetLastNLines returns the last n lines of text.
 // If the text has fewer than n lines, returns the entire text.
-func getLastNLines(text string, n int) string {
+func GetLastNLines(text string, n int) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) <= n {
 		return text
@@ -399,12 +405,12 @@ func getLastNLines(text string, n int) string {
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
-// stripANSICodes removes ANSI escape sequences from text.
-// This ensures pattern matching works correctly on terminal output.
+// AnsiPattern matches ANSI escape sequences for stripping.
 // Matches CSI sequences (with private mode ?) and OSC sequences (title setting etc)
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\a\x1b]*(\a|\x1b\\)`)
 
-func stripANSICodes(text string) string {
+// StripANSICodes removes ANSI escape sequences from text.
+func StripANSICodes(text string) string {
 	return ansiPattern.ReplaceAllString(text, "")
 }
 

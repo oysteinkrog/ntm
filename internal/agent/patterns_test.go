@@ -338,7 +338,7 @@ func TestGetLastNLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := getLastNLines(tt.text, tt.n)
+			result := GetLastNLines(tt.text, tt.n)
 			// Count lines in result
 			var lineCount int
 			if result == "" {
@@ -354,7 +354,7 @@ func TestGetLastNLines(t *testing.T) {
 
 			// For non-empty text, verify we got the right count
 			if tt.text != "" && lineCount > tt.n {
-				t.Errorf("getLastNLines() returned %d lines, want at most %d", lineCount, tt.n)
+				t.Errorf("GetLastNLines() returned %d lines, want at most %d", lineCount, tt.n)
 			}
 		})
 	}
@@ -390,8 +390,8 @@ func TestStripANSICodes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := stripANSICodes(tt.text); got != tt.want {
-				t.Errorf("stripANSICodes() = %q, want %q", got, tt.want)
+			if got := StripANSICodes(tt.text); got != tt.want {
+				t.Errorf("StripANSICodes() = %q, want %q", got, tt.want)
 			}
 		})
 	}

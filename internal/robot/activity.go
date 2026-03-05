@@ -618,6 +618,11 @@ func (sc *StateClassifier) classifyState(velocity float64, matches []PatternMatc
 		return StateWaiting, 0.60, "idle_no_output"
 	}
 
+	// Empty pane with known agent type = idle (freshly restarted or finished)
+	if velocity == 0 && len(matches) == 0 && sc.agentType != "" {
+		return StateWaiting, 0.65, "empty_known_agent"
+	}
+
 	// Default to unknown
 	return StateUnknown, 0.50, "insufficient_signals"
 }
