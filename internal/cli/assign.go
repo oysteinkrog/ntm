@@ -4089,6 +4089,12 @@ func (w *WatchLoop) Run(ctx context.Context) error {
 
 	w.logf("Starting watch mode with strategy=%s", w.strategy)
 
+	// Periodic idle scan: check for idle agents that have no active assignment
+	// and assign them work. This catches agents that booted late, completed
+	// untracked work, or were missed during initial assignment.
+	idleScanTicker := time.NewTicker(45 * time.Second)
+	defer idleScanTicker.Stop()
+
 	// Main watch loop
 	for {
 		select {
@@ -4109,6 +4115,9 @@ func (w *WatchLoop) Run(ctx context.Context) error {
 					return nil
 				}
 			}
+
+		case <-idleScanTicker.C:
+			w.scanAndAssignIdle()
 
 		case <-ctx.Done():
 			w.logf("Watch mode interrupted. Shutting down...")
@@ -4183,6 +4192,74 @@ func (w *WatchLoop) handleCompletion(event completion.CompletionEvent) error {
 	}
 
 	return nil
+}
+
+// scanAndAssignIdle checks for idle agents without active assignments and
+// assigns them work. This is the periodic heartbeat that ensures no agent
+// sits idle just because the completion detector missed an event.
+func (w *WatchLoop) scanAndAssignIdle() {
+	idleAgents, err := getIdleAgents(w.session, w.opts.AgentTypeFilter, false)
+	if err != nil || len(idleAgents) == 0 {
+		return
+	}
+
+	// Filter to agents that don't have an active assignment
+	active := w.store.ListActive()
+	activePanes := make(map[int]bool)
+	for _, a := range active {
+		activePanes[a.Pane] = true
+	}
+
+	var unassigned []assignAgentInfo
+	for _, a := range idleAgents {
+		if !activePanes[a.pane.Index] {
+			unassigned = append(unassigned, a)
+		}
+	}
+
+	if len(unassigned) == 0 {
+		return
+	}
+
+	w.logf("[IDLE-SCAN] Found %d idle agent(s) without assignments, triggering assignment", len(unassigned))
+
+	// Use the same assignment flow as the main assign command
+	opts := &AssignCommandOptions{
+		Session:         w.session,
+		Strategy:        w.strategy,
+		Limit:           len(unassigned),
+		AgentTypeFilter: w.opts.AgentTypeFilter,
+		Template:        w.opts.Template,
+		TemplateFile:    w.opts.TemplateFile,
+		Quiet:           w.quiet,
+		Verbose:         w.verbose,
+		Force:           true,
+		Pane:            -1,
+		ClearPane:       -1,
+	}
+
+	plan, err := getAssignOutputEnhanced(opts)
+	if err != nil {
+		w.logf("[IDLE-SCAN] Warning: failed to build plan: %v", err)
+		return
+	}
+
+	if len(plan.Assignments) == 0 {
+		return
+	}
+
+	if err := executeAssignmentsEnhanced(w.session, plan, opts); err != nil {
+		w.logf("[IDLE-SCAN] Warning: failed to execute assignments: %v", err)
+		return
+	}
+
+	w.mu.Lock()
+	for _, a := range plan.Assignments {
+		w.totalAssigned++
+		w.lastAssignmentAt = time.Now()
+		w.logf("[IDLE-SCAN] Assigned: %s -> pane %d (%s)", a.BeadID, a.Pane, a.AgentType)
+	}
+	w.mu.Unlock()
 }
 
 // shouldStop checks if watch mode should exit
