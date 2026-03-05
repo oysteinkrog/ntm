@@ -4022,6 +4022,7 @@ type WatchLoop struct {
 	totalFailed      int
 	startTime        time.Time
 	lastAssignmentAt time.Time
+	paneCooldown     map[int]time.Time // pane index -> earliest next assignment
 }
 
 // NewWatchLoop creates a new watch loop for a session
@@ -4038,6 +4039,7 @@ func NewWatchLoop(session string, store *assignment.AssignmentStore, opts *AutoR
 		verbose:      opts.Verbose,
 		stopCh:       make(chan struct{}),
 		startTime:    time.Now(),
+		paneCooldown: make(map[int]time.Time),
 	}
 }
 
@@ -4210,11 +4212,20 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		activePanes[a.Pane] = true
 	}
 
+	now := time.Now()
 	var unassigned []assignAgentInfo
 	for _, a := range idleAgents {
-		if !activePanes[a.pane.Index] {
-			unassigned = append(unassigned, a)
+		if activePanes[a.pane.Index] {
+			continue
 		}
+		// Skip panes in cooldown — they were recently assigned and may still be booting
+		w.mu.Lock()
+		cooldownUntil, hasCooldown := w.paneCooldown[a.pane.Index]
+		w.mu.Unlock()
+		if hasCooldown && now.Before(cooldownUntil) {
+			continue
+		}
+		unassigned = append(unassigned, a)
 	}
 
 	if len(unassigned) == 0 {
@@ -4254,10 +4265,12 @@ func (w *WatchLoop) scanAndAssignIdle() {
 	}
 
 	w.mu.Lock()
+	cooldownUntil := time.Now().Add(90 * time.Second)
 	for _, a := range plan.Assignments {
 		w.totalAssigned++
 		w.lastAssignmentAt = time.Now()
-		w.logf("[IDLE-SCAN] Assigned: %s -> pane %d (%s)", a.BeadID, a.Pane, a.AgentType)
+		w.paneCooldown[a.Pane] = cooldownUntil
+		w.logf("[IDLE-SCAN] Assigned: %s -> pane %d (%s) [cooldown 90s]", a.BeadID, a.Pane, a.AgentType)
 	}
 	w.mu.Unlock()
 }
