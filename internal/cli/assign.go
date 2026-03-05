@@ -815,6 +815,31 @@ func detectAgentTypeFromTitle(title string) string {
 	return "unknown"
 }
 
+// detectAgentTypeFromCommand detects agent type from the pane's running command.
+// This handles cases where Claude Code overrides the pane title with its task
+// description, losing the agent type information from the original NTM title.
+func detectAgentTypeFromCommand(command string) string {
+	cmd := strings.ToLower(strings.TrimSpace(command))
+	if cmd == "" {
+		return "unknown"
+	}
+	switch {
+	case cmd == "claude" || strings.HasPrefix(cmd, "claude ") || strings.HasSuffix(cmd, "/claude"):
+		return "claude"
+	case cmd == "codex" || strings.HasPrefix(cmd, "codex ") || strings.HasSuffix(cmd, "/codex"):
+		return "codex"
+	case cmd == "gemini" || strings.HasPrefix(cmd, "gemini ") || strings.HasSuffix(cmd, "/gemini"):
+		return "gemini"
+	case cmd == "cursor" || strings.HasPrefix(cmd, "cursor ") || strings.HasSuffix(cmd, "/cursor"):
+		return "cursor"
+	case cmd == "windsurf" || strings.HasPrefix(cmd, "windsurf ") || strings.HasSuffix(cmd, "/windsurf"):
+		return "windsurf"
+	case cmd == "aider" || strings.HasPrefix(cmd, "aider ") || strings.HasSuffix(cmd, "/aider"):
+		return "aider"
+	}
+	return "unknown"
+}
+
 // detectModelFromTitle extracts model variant from title
 func detectModelFromTitle(agentType, title string) string {
 	// Simplified model detection
@@ -1215,6 +1240,12 @@ func getAssignOutputEnhanced(opts *AssignCommandOptions) (*AssignOutputEnhanced,
 
 	for _, pane := range panes {
 		at := detectAgentTypeFromTitle(pane.Title)
+		// Fallback: Claude Code changes pane titles to task descriptions
+		// (e.g. "Close Epic bd-jrv") which don't contain "claude".
+		// Use pane command as fallback for agent type detection.
+		if at == "user" || at == "unknown" {
+			at = detectAgentTypeFromCommand(pane.Command)
+		}
 		if at == "user" || at == "unknown" {
 			continue
 		}
@@ -3885,6 +3916,12 @@ func getIdleAgents(session, agentTypeFilter string, verbose bool) ([]assignAgent
 
 	for _, pane := range panes {
 		agentType := detectAgentTypeFromTitle(pane.Title)
+		// Fallback: Claude Code changes pane titles to task descriptions
+		// (e.g. "Close Epic bd-jrv") which don't contain "claude".
+		// Use pane command as fallback for agent type detection.
+		if agentType == "user" || agentType == "unknown" {
+			agentType = detectAgentTypeFromCommand(pane.Command)
+		}
 		if agentType == "user" || agentType == "unknown" {
 			continue
 		}
