@@ -4211,7 +4211,9 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		return
 	}
 
-	// Filter to agents that don't have an active assignment
+	// Filter to agents that don't have an active assignment and aren't in cooldown.
+	// Check both: (a) panes with active store entries, (b) panes with recent cooldowns.
+	// The store is keyed by bead ID, so we build a pane-indexed set from it.
 	active := w.store.ListActive()
 	activePanes := make(map[int]bool)
 	for _, a := range active {
@@ -4219,20 +4221,19 @@ func (w *WatchLoop) scanAndAssignIdle() {
 	}
 
 	now := time.Now()
+	w.mu.Lock()
 	var unassigned []assignAgentInfo
 	for _, a := range idleAgents {
 		if activePanes[a.pane.Index] {
 			continue
 		}
 		// Skip panes in cooldown — they were recently assigned and may still be booting
-		w.mu.Lock()
-		cooldownUntil, hasCooldown := w.paneCooldown[a.pane.Index]
-		w.mu.Unlock()
-		if hasCooldown && now.Before(cooldownUntil) {
+		if cooldownUntil, hasCooldown := w.paneCooldown[a.pane.Index]; hasCooldown && now.Before(cooldownUntil) {
 			continue
 		}
 		unassigned = append(unassigned, a)
 	}
+	w.mu.Unlock()
 
 	if len(unassigned) == 0 {
 		return
@@ -4298,6 +4299,22 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		w.logf("[IDLE-SCAN] Warning: failed to build plan: %v", err)
 		return
 	}
+
+	// Filter out beads already in the active store to prevent re-assignment
+	// of the same bead to a different pane on successive idle scans.
+	activeBeads := make(map[string]bool)
+	for _, a := range w.store.ListActive() {
+		activeBeads[a.BeadID] = true
+	}
+	var filtered []AssignmentItem
+	for _, a := range plan.Assignments {
+		if activeBeads[a.BeadID] {
+			w.logf("[IDLE-SCAN] Skipping %s — already assigned to another pane", a.BeadID)
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	plan.Assignments = filtered
 
 	if len(plan.Assignments) == 0 {
 		return
