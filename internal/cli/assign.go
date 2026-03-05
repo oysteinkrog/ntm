@@ -4092,7 +4092,7 @@ func (w *WatchLoop) Run(ctx context.Context) error {
 	// Periodic idle scan: check for idle agents that have no active assignment
 	// and assign them work. This catches agents that booted late, completed
 	// untracked work, or were missed during initial assignment.
-	idleScanTicker := time.NewTicker(45 * time.Second)
+	idleScanTicker := time.NewTicker(20 * time.Second)
 	defer idleScanTicker.Stop()
 
 	// Main watch loop
