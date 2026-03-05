@@ -4290,7 +4290,7 @@ func (w *WatchLoop) scanAndAssignIdle() {
 	opts := &AssignCommandOptions{
 		Session:         w.session,
 		Strategy:        w.strategy,
-		Limit:           len(assignable),
+		Limit:           10, // Over-request generously so dedup has enough fresh beads
 		AgentTypeFilter: w.opts.AgentTypeFilter,
 		Template:        w.opts.Template,
 		TemplateFile:    w.opts.TemplateFile,
@@ -4320,6 +4320,10 @@ func (w *WatchLoop) scanAndAssignIdle() {
 			continue
 		}
 		filtered = append(filtered, a)
+	}
+	// Cap to the number of assignable panes (we over-requested)
+	if len(filtered) > len(assignable) {
+		filtered = filtered[:len(assignable)]
 	}
 	plan.Assignments = filtered
 
