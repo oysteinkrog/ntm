@@ -4151,6 +4151,16 @@ func (w *WatchLoop) handleCompletion(event completion.CompletionEvent) error {
 		return nil
 	}
 
+	// Ignore false completions: if the "completion" fires within 3 minutes of
+	// assignment, it's almost certainly a false positive from the completion
+	// detector seeing a brief idle prompt before the agent starts working.
+	// Real bead implementations take at least several minutes.
+	const minCompletionDuration = 3 * time.Minute
+	if duration < minCompletionDuration {
+		w.logf("Ignoring premature completion for %s (duration %v < %v)", event.BeadID, duration, minCompletionDuration)
+		return nil
+	}
+
 	w.totalCompleted++
 	w.logf("Completion: %s by pane %d (%s, %v)", event.BeadID, event.Pane, event.AgentType, duration)
 
