@@ -4440,25 +4440,34 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		return
 	}
 
-	// ── Git cleanliness gate ──
-	// Before assigning new work, check if the pane's working directory has
-	// uncommitted changes. Agents that finished a bead but didn't commit
-	// should not receive new work — it creates a blob of mixed changes.
-	// We check per-pane CWD to support worktree isolation.
-	var clean []assignAgentInfo
+	// ── Git dirty → ask agent to commit first ──
+	// If the pane has uncommitted changes from previous work, send a commit
+	// instruction and put it in cooldown. The agent will stage intelligently,
+	// commit, and then be ready for new work on the next scan cycle.
+	var ready []assignAgentInfo
 	for _, a := range assignable {
 		paneCwd := getPaneCwd(a.pane.ID)
 		if paneCwd == "" {
-			clean = append(clean, a) // Can't determine CWD, allow assignment
+			ready = append(ready, a)
 			continue
 		}
 		if isGitDirty(paneCwd) {
-			w.logf("[IDLE-SCAN] Pane %d: git working tree is dirty, skipping assignment (cwd=%s)", a.pane.Index, paneCwd)
+			w.logf("[IDLE-SCAN] Pane %d: dirty working tree, asking agent to commit first", a.pane.Index)
+			commitPrompt := "You have uncommitted changes from previous work. " +
+				"Review them with 'git diff' and 'git status', then make one or more " +
+				"atomic commits grouping related changes. Use smart staging (git add -p " +
+				"or specific files) to separate unrelated changes into distinct commits. " +
+				"Each commit message should reference the bead ID if known: " +
+				"'feat(bd-XXX): description'. After committing all changes, say DONE."
+			_ = tmux.SendKeys(a.pane.ID, commitPrompt, true)
+			w.mu.Lock()
+			w.paneCooldown[a.pane.Index] = time.Now().Add(90 * time.Second)
+			w.mu.Unlock()
 			continue
 		}
-		clean = append(clean, a)
+		ready = append(ready, a)
 	}
-	assignable = clean
+	assignable = ready
 
 	if len(assignable) == 0 {
 		return
