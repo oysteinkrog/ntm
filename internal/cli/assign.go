@@ -4163,6 +4163,9 @@ func (w *WatchLoop) Run(ctx context.Context) error {
 			}
 
 		case <-idleScanTicker.C:
+			// Health scan runs on ALL panes regardless of assignment state.
+			// Must run before scanAndAssignIdle since it may free up panes.
+			w.healthScanPanes()
 			w.scanAndAssignIdle()
 
 		case <-ctx.Done():
@@ -4363,10 +4366,6 @@ func (w *WatchLoop) healthScanPanes() {
 // - Auto-approves permission prompts (Enter) for blocked agents
 // - Recycles agents with exhausted context (kill + respawn)
 func (w *WatchLoop) scanAndAssignIdle() {
-	// ── Health scan: permission prompts & context exhaustion ──
-	// Runs on ALL panes (not just idle ones) to catch blocked agents.
-	w.healthScanPanes()
-
 	idleAgents, err := getIdleAgents(w.session, w.opts.AgentTypeFilter, false)
 	if err != nil || len(idleAgents) == 0 {
 		return
