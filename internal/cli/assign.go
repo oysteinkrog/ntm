@@ -4267,6 +4267,7 @@ func (w *WatchLoop) handleCompletion(event completion.CompletionEvent) error {
 func (w *WatchLoop) healthScanPanes() {
 	panes, err := tmux.GetPanes(w.session)
 	if err != nil {
+		w.logf("[HEALTH] Warning: failed to get panes: %v", err)
 		return
 	}
 
