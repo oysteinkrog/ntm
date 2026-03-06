@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"regexp"
 	"strconv"
@@ -4439,6 +4440,30 @@ func (w *WatchLoop) scanAndAssignIdle() {
 		return
 	}
 
+	// ── Git cleanliness gate ──
+	// Before assigning new work, check if the pane's working directory has
+	// uncommitted changes. Agents that finished a bead but didn't commit
+	// should not receive new work — it creates a blob of mixed changes.
+	// We check per-pane CWD to support worktree isolation.
+	var clean []assignAgentInfo
+	for _, a := range assignable {
+		paneCwd := getPaneCwd(a.pane.ID)
+		if paneCwd == "" {
+			clean = append(clean, a) // Can't determine CWD, allow assignment
+			continue
+		}
+		if isGitDirty(paneCwd) {
+			w.logf("[IDLE-SCAN] Pane %d: git working tree is dirty, skipping assignment (cwd=%s)", a.pane.Index, paneCwd)
+			continue
+		}
+		clean = append(clean, a)
+	}
+	assignable = clean
+
+	if len(assignable) == 0 {
+		return
+	}
+
 	// Use the same assignment flow as the main assign command
 	opts := &AssignCommandOptions{
 		Session:         w.session,
@@ -4553,6 +4578,27 @@ func respawnDeadAgent(session string, pane tmux.Pane, agentType string) error {
 
 	// Send the agent command to the pane
 	return tmux.SendKeys(pane.ID, cmd, true)
+}
+
+// getPaneCwd returns the current working directory of a tmux pane.
+// Returns empty string if it cannot be determined.
+func getPaneCwd(paneID string) string {
+	output, err := tmux.DefaultClient.Run("display-message", "-p", "-t", paneID, "#{pane_current_path}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(output)
+}
+
+// isGitDirty checks if the given directory has uncommitted git changes.
+// Returns true if there are staged or unstaged modifications.
+func isGitDirty(dir string) bool {
+	cmd := exec.Command("git", "-C", dir, "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return false // Can't determine, assume clean
+	}
+	return len(strings.TrimSpace(string(output))) > 0
 }
 
 // shouldStop checks if watch mode should exit
