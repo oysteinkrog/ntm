@@ -126,11 +126,13 @@ var (
 	// ccContextExhaustionPatterns detect severe context exhaustion.
 	// These indicate the agent should be recycled (killed + respawned),
 	// not just warned about. Distinct from ccContextWarnings which are early warnings.
+	// NOTE: "Context left until auto-compact: N%" appears in the status bar at ALL
+	// levels, so we only match single-digit percentages (critical exhaustion).
+	// Do NOT match "auto-compact" broadly — it appears even at 95%.
 	ccContextExhaustionPatterns = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)context\s+left.*:\s*[0-9]%`),       // Single-digit context remaining
-		regexp.MustCompile(`(?i)auto-compact`),                      // Auto-compact message
-		regexp.MustCompile(`(?i)conversation\s+has\s+been\s+compacted`),
-		regexp.MustCompile(`(?i)context\s+window\s+is\s+full`),
+		regexp.MustCompile(`context\s+left[^:]*:\s*[0-9]%`),          // Single-digit context remaining (e.g., "4%")
+		regexp.MustCompile(`(?i)conversation\s+has\s+been\s+compacted`), // Already compacted
+		regexp.MustCompile(`(?i)context\s+window\s+is\s+full`),        // Completely full
 	}
 )
 
