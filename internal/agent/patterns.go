@@ -105,6 +105,33 @@ var (
 
 	// ccHeaderPattern confirms output is from Claude Code.
 	ccHeaderPattern = regexp.MustCompile(`(?i)\b(opus|claude|sonnet|haiku)\b\s*\d*\.?\d*`)
+
+	// ccPermissionPromptPatterns detect Claude Code's tool approval prompts.
+	// These fire even with --dangerously-skip-permissions for shell-risk commands
+	// containing $(), |, 2>&1 etc. When matched, the watcher should auto-send
+	// Enter/y to unblock the agent.
+	// IMPORTANT: These must be NARROW to avoid false positives.
+	ccPermissionPromptPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)do you want to proceed`),
+		regexp.MustCompile(`(?i)allow\s+once`),
+		regexp.MustCompile(`(?i)allow\s+always`),
+		regexp.MustCompile(`(?i)\(y\)es\s*/\s*\(n\)o`),
+		regexp.MustCompile(`(?i)allow\?\s`),
+		regexp.MustCompile(`(?i)wants?\s+to\s+run\b`),
+		regexp.MustCompile(`(?i)wants?\s+to\s+execute\b`),
+		regexp.MustCompile(`(?i)command\s+contains\s+.*substitution`),
+		regexp.MustCompile(`(?i)press\s+enter\s+to\s+allow`),
+	}
+
+	// ccContextExhaustionPatterns detect severe context exhaustion.
+	// These indicate the agent should be recycled (killed + respawned),
+	// not just warned about. Distinct from ccContextWarnings which are early warnings.
+	ccContextExhaustionPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)context\s+left.*:\s*[0-9]%`),       // Single-digit context remaining
+		regexp.MustCompile(`(?i)auto-compact`),                      // Auto-compact message
+		regexp.MustCompile(`(?i)conversation\s+has\s+been\s+compacted`),
+		regexp.MustCompile(`(?i)context\s+window\s+is\s+full`),
+	}
 )
 
 // Codex CLI (cod) patterns for state detection.
@@ -327,8 +354,8 @@ func matchAny(text string, patterns []string) bool {
 	return false
 }
 
-// matchAnyRegex returns true if text matches any of the regex patterns.
-func matchAnyRegex(text string, patterns []*regexp.Regexp) bool {
+// MatchAnyRegex returns true if text matches any of the regex patterns.
+func MatchAnyRegex(text string, patterns []*regexp.Regexp) bool {
 	for _, p := range patterns {
 		if p.MatchString(text) {
 			return true
@@ -393,6 +420,18 @@ func extractInt(pattern *regexp.Regexp, text string) *int64 {
 // Exported for use by the assign package's fallback idle detection.
 func CCSpinnerActivePatterns() []*regexp.Regexp {
 	return ccSpinnerActivePatterns
+}
+
+// CCPermissionPromptPatterns returns patterns for Claude Code permission/approval prompts.
+// Exported for use by the assign package's watcher auto-approval.
+func CCPermissionPromptPatterns() []*regexp.Regexp {
+	return ccPermissionPromptPatterns
+}
+
+// CCContextExhaustionPatterns returns patterns for severe context exhaustion.
+// Exported for use by the assign package's auto-recycle logic.
+func CCContextExhaustionPatterns() []*regexp.Regexp {
+	return ccContextExhaustionPatterns
 }
 
 // GetLastNLines returns the last n lines of text.

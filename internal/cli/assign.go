@@ -4256,10 +4256,116 @@ func (w *WatchLoop) handleCompletion(event completion.CompletionEvent) error {
 	return nil
 }
 
+// healthScanPanes checks ALL agent panes for conditions that need supervisor intervention:
+// 1. Permission prompts — auto-send Enter to unblock
+// 2. Context exhaustion — kill agent process and respawn fresh
+// This runs every idle-scan cycle (20s) on all panes, not just idle ones.
+func (w *WatchLoop) healthScanPanes() {
+	panes, err := tmux.GetPanes(w.session)
+	if err != nil {
+		return
+	}
+
+	permissionPatterns := agent.CCPermissionPromptPatterns()
+	exhaustionPatterns := agent.CCContextExhaustionPatterns()
+
+	for _, pane := range panes {
+		// Determine agent type
+		agentType := detectAgentTypeFromTitle(pane.Title)
+		if agentType == "user" || agentType == "unknown" {
+			agentType = detectAgentTypeFromCommand(pane.Command)
+		}
+		if agentType == "user" || agentType == "unknown" {
+			continue
+		}
+
+		// Skip panes in cooldown
+		w.mu.Lock()
+		if cd, has := w.paneCooldown[pane.Index]; has && time.Now().Before(cd) {
+			w.mu.Unlock()
+			continue
+		}
+		w.mu.Unlock()
+
+		// Only check Claude Code agents (other agents don't have these patterns)
+		if agentType != "claude" && agentType != "cc" {
+			continue
+		}
+
+		scrollback, err := tmux.CaptureForStatusDetection(pane.ID)
+		if err != nil || scrollback == "" {
+			continue
+		}
+
+		cleanText := agent.StripANSICodes(scrollback)
+		lastLines := agent.GetLastNLines(cleanText, 20)
+
+		// ── Check 1: Permission prompt → auto-approve ──
+		if agent.MatchAnyRegex(lastLines, permissionPatterns) {
+			// Verify the agent isn't actively spinning (permission prompt + spinner = still processing)
+			hasActiveSpinner := false
+			for _, sp := range agent.CCSpinnerActivePatterns() {
+				if sp.MatchString(lastLines) {
+					hasActiveSpinner = true
+					break
+				}
+			}
+			if !hasActiveSpinner {
+				w.logf("[HEALTH] Pane %d: permission prompt detected, auto-approving (Enter)", pane.Index)
+				_ = tmux.SendKeys(pane.ID, "", true) // Send Enter to approve
+				w.mu.Lock()
+				w.paneCooldown[pane.Index] = time.Now().Add(10 * time.Second) // Short cooldown
+				w.mu.Unlock()
+				continue
+			}
+		}
+
+		// ── Check 2: Context exhaustion → recycle agent ──
+		if agent.MatchAnyRegex(lastLines, exhaustionPatterns) {
+			w.logf("[HEALTH] Pane %d: context exhausted, recycling agent", pane.Index)
+			// Kill the agent process (Ctrl+C twice, then respawn)
+			_ = tmux.SendKeys(pane.ID, "C-c", false)
+			time.Sleep(500 * time.Millisecond)
+			_ = tmux.SendKeys(pane.ID, "C-c", false)
+			time.Sleep(1 * time.Second)
+			// Send exit to ensure clean shell state
+			_ = tmux.SendKeys(pane.ID, "exit", true)
+			time.Sleep(1 * time.Second)
+			// Respawn the agent
+			if err := respawnDeadAgent(w.session, pane, agentType); err != nil {
+				w.logf("[HEALTH] Warning: respawn pane %d failed: %v", pane.Index, err)
+				w.mu.Lock()
+				w.paneCooldown[pane.Index] = time.Now().Add(5 * time.Minute)
+				w.mu.Unlock()
+			} else {
+				w.logf("[HEALTH] Pane %d: agent respawned, cooling down 45s", pane.Index)
+				// Remove any active assignment for this pane
+				for _, a := range w.store.ListActive() {
+					if a.Pane == pane.Index {
+						w.store.Remove(a.BeadID)
+						w.logf("[HEALTH] Removed stale assignment %s from pane %d", a.BeadID, pane.Index)
+					}
+				}
+				w.mu.Lock()
+				w.paneCooldown[pane.Index] = time.Now().Add(45 * time.Second)
+				w.mu.Unlock()
+			}
+		}
+	}
+}
+
 // scanAndAssignIdle checks for idle agents without active assignments and
 // assigns them work. This is the periodic heartbeat that ensures no agent
 // sits idle just because the completion detector missed an event.
+//
+// Also performs health checks on all panes:
+// - Auto-approves permission prompts (Enter) for blocked agents
+// - Recycles agents with exhausted context (kill + respawn)
 func (w *WatchLoop) scanAndAssignIdle() {
+	// ── Health scan: permission prompts & context exhaustion ──
+	// Runs on ALL panes (not just idle ones) to catch blocked agents.
+	w.healthScanPanes()
+
 	idleAgents, err := getIdleAgents(w.session, w.opts.AgentTypeFilter, false)
 	if err != nil || len(idleAgents) == 0 {
 		return

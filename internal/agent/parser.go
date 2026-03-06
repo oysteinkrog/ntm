@@ -225,7 +225,7 @@ func (p *parserImpl) detectStateFlags(output string, state *AgentState) {
 		if idx := strings.LastIndex(lastLines, "❯"); idx >= 0 {
 			afterPrompt = lastLines[idx:]
 		}
-		if matchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
+		if MatchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
 			state.IsWorking = true
 		}
 	}
@@ -311,7 +311,7 @@ func (p *parserImpl) detectIdle(output string, agentType AgentType) bool {
 		if strings.TrimSpace(lastLines) == "" {
 			return true
 		}
-		idleMatch := matchAnyRegex(lastLines, ccIdlePatterns)
+		idleMatch := MatchAnyRegex(lastLines, ccIdlePatterns)
 		// Active spinner overrides idle ONLY if the spinner appears AFTER the
 		// last ❯ prompt. Spinners above the prompt are stale (previous turn).
 		// Check only lines after the last ❯ for active spinners.
@@ -320,30 +320,30 @@ func (p *parserImpl) detectIdle(output string, agentType AgentType) bool {
 			if idx := strings.LastIndex(lastLines, "❯"); idx >= 0 {
 				afterPrompt = lastLines[idx:]
 			}
-			if matchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
+			if MatchAnyRegex(afterPrompt, ccSpinnerActivePatterns) {
 				return false
 			}
 		}
 		return idleMatch
 	case AgentTypeCodex:
-		return matchAnyRegex(lastLines, codIdlePatterns)
+		return MatchAnyRegex(lastLines, codIdlePatterns)
 	case AgentTypeGemini:
 		// Gemini is trickier - check for prompt or lack of working indicators
-		return matchAnyRegex(lastLines, gmiIdlePatterns)
+		return MatchAnyRegex(lastLines, gmiIdlePatterns)
 	case AgentTypeCursor:
-		return matchAnyRegex(lastLines, cursorIdlePatterns)
+		return MatchAnyRegex(lastLines, cursorIdlePatterns)
 	case AgentTypeWindsurf:
-		return matchAnyRegex(lastLines, windsurfIdlePatterns)
+		return MatchAnyRegex(lastLines, windsurfIdlePatterns)
 	case AgentTypeAider:
-		return matchAnyRegex(lastLines, aiderIdlePatterns)
+		return MatchAnyRegex(lastLines, aiderIdlePatterns)
 	default:
 		// Check all idle patterns for unknown type
-		return matchAnyRegex(lastLines, ccIdlePatterns) ||
-			matchAnyRegex(lastLines, codIdlePatterns) ||
-			matchAnyRegex(lastLines, gmiIdlePatterns) ||
-			matchAnyRegex(lastLines, cursorIdlePatterns) ||
-			matchAnyRegex(lastLines, windsurfIdlePatterns) ||
-			matchAnyRegex(lastLines, aiderIdlePatterns)
+		return MatchAnyRegex(lastLines, ccIdlePatterns) ||
+			MatchAnyRegex(lastLines, codIdlePatterns) ||
+			MatchAnyRegex(lastLines, gmiIdlePatterns) ||
+			MatchAnyRegex(lastLines, cursorIdlePatterns) ||
+			MatchAnyRegex(lastLines, windsurfIdlePatterns) ||
+			MatchAnyRegex(lastLines, aiderIdlePatterns)
 	}
 }
 
